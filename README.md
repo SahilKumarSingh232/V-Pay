@@ -1,67 +1,35 @@
-# V-Pay
-
 # VirtualPay
 
-VirtualPay is a banking concept that helps users manage their money better by creating multiple **Virtual Payment Accounts** under a single bank account.
+VirtualPay is a Streamlit prototype for organizing one bank balance into purpose-based virtual account budgets. Virtual accounts are allocations in the app; money is not moved into separate bank accounts.
 
-Instead of opening multiple bank accounts for different purposes, users can create virtual accounts like Shopping, Business, Travel, Emergency, etc., and allocate a budget to each one.
+## Run locally
 
-The actual money always stays in the main bank account. Virtual accounts only store the allocated amount.
+1. Install Python 3.10 or newer.
+2. From this folder, install dependencies:
 
----
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
 
-## Why this project?
+3. Start the app:
 
-Today, all payments are made directly from one bank account. This makes it difficult to keep track of spending for different purposes.
+   ```bash
+   streamlit run app.py
+   ```
 
-For example:
+The app opens in your browser, usually at `http://localhost:8501`.
 
-- Shopping
-- Business
-- Travel
-- Monthly Subscriptions
-- Emergency Fund
+## Demo sign-in
 
-Everything is mixed together.
+- Enter any 10-digit phone number.
+- Use OTP `123456`.
+- New users can create a demo profile, choose a sample bank, and set a made-up payment PIN.
+- Returning users enter the same phone number and their demo PIN.
 
-VirtualPay solves this by letting users organize their money into different virtual accounts while still using a single bank account.
+QR codes and camera scanning are for VirtualPay demo IDs. Transfers are simulated; the app does not connect to a bank, send UPI payments, or require a real PIN. Account and transaction data is stored locally in `virtualpay.db`.
 
----
+## Project files
 
-## How it works
-
-Suppose your bank account has **₹50,000**.
-
-You create three virtual accounts:
-
-- Shopping → ₹10,000
-- Business → ₹20,000
-- Emergency → ₹5,000
-
-The remaining amount is available for future allocation.
-
-No money is transferred to these virtual accounts. They only represent the amount reserved for each purpose.
-
-When making a payment:
-
-1. Select a virtual account.
-2. Enter the payment amount.
-3. The system checks whether the selected virtual account has enough allocated balance.
-4. Enter your regular UPI PIN.
-5. The payment is completed using your actual UPI ID.
-6. The allocation of the selected virtual account is reduced by the payment amount.
-
----
-
-## Main Features
-
-- User Registration and Login
-- Link Bank Account
-- Create Virtual Accounts
-- Allocate Money
-- Make Payments
-- Transaction History
-- Notifications
-- Allocation Rebalancing
-
----
+- `app.py` — Streamlit UI and local SQLite demo logic
+- `requirements.txt` — Python dependencies
+- `.streamlit/config.toml` — Streamlit's native theme settings

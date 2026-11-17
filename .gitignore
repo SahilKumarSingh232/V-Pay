@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+virtualpay.db
+virtualpay.db-shm
+virtualpay.db-wal
+.streamlit/secrets.toml
