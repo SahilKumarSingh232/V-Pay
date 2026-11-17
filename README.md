@@ -28,6 +28,19 @@ The app opens in your browser, usually at `http://localhost:8501`.
 
 QR codes and camera scanning are for VirtualPay demo IDs. Transfers are simulated; the app does not connect to a bank, send UPI payments, or require a real PIN. Account and transaction data is stored locally in `virtualpay.db`.
 
+## Backend and user data
+
+The backend is implemented in Python in `app.py`, alongside the Streamlit interface. It handles demo sign-in, account allocation and rebalancing, simulated transfers, QR creation and scanning, and transaction history. SQLite queries and business logic are kept in the same file; this prototype does not use a separate API server.
+
+The database is created automatically at `virtualpay.db` in the project folder when the app starts. It stores:
+
+- User profile details: phone number, name, selected bank, and the last four account digits
+- A hash of the demo payment PIN
+- Virtual account names, budgets, and allocated balances
+- Transaction history and saved recipients
+
+The database is listed in `.gitignore`, so it is not committed to or uploaded to GitHub. Data stays on the machine running Streamlit. If the app is deployed, the database will be on that server instead. This local SQLite setup is for prototyping; it is not designed as secure production banking storage.
+
 ## Project files
 
 - `app.py` — Streamlit UI and local SQLite demo logic
