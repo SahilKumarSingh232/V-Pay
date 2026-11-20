@@ -20,6 +20,8 @@ APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "virtualpay.db"
 OTP_DEMO = "123456"
 BANKS = ["State Bank of India", "HDFC Bank", "ICICI Bank", "Axis Bank", "Other bank"]
+ADMIN_PHONE = "1223334444"
+ADMIN_PIN = "282005"
 
 
 def connect() -> sqlite3.Connection:
@@ -120,10 +122,21 @@ def get_account(phone: str, account_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def available_to_allocate(phone: str) -> int:
+def is_admin(phone: str) -> bool:
+    return phone == ADMIN_PHONE
+
+
+def available_to_allocate(phone: str) -> int | float:
+    if is_admin(phone):
+        return float("inf")
     user = get_user(phone)
     accounts = list_accounts(phone)
     return int(user["bank_balance"] - sum(a["balance"] for a in accounts))
+
+
+def available_label(phone: str) -> str:
+    available = available_to_allocate(phone)
+    return "Unlimited" if is_admin(phone) else Indian_money(available)
 
 
 def add_transaction(
@@ -146,6 +159,31 @@ def create_user(phone: str, name: str, bank: str, last4: str, pin: str, bank_bal
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (phone, name.strip(), bank, last4, bank_balance, virtual_id, pin_digest(pin), now),
         )
+
+
+def ensure_admin_profile() -> None:
+    """Create or reserve the built-in Admin profile for this local demo."""
+    with connect() as db:
+        existing = db.execute("SELECT phone FROM users WHERE phone = ?", (ADMIN_PHONE,)).fetchone()
+        if existing:
+            db.execute(
+                "UPDATE users SET name = ?, bank = ?, last4 = ?, pin_hash = ? WHERE phone = ?",
+                ("Admin", "VirtualPay Demo", "0000", pin_digest(ADMIN_PIN), ADMIN_PHONE),
+            )
+        else:
+            db.execute(
+                """INSERT INTO users(phone, name, bank, last4, bank_balance, virtual_id, pin_hash, created_at)
+                   VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
+                (
+                    ADMIN_PHONE,
+                    "Admin",
+                    "VirtualPay Demo",
+                    "0000",
+                    "VP-" + secrets.token_hex(3).upper(),
+                    pin_digest(ADMIN_PIN),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
 
 
 def record_recipient(phone: str, recipient: str, name: str = "") -> None:
@@ -232,6 +270,7 @@ def authenticate(phone: str) -> None:
 
 st.set_page_config(page_title="VirtualPay", page_icon=":material/account_balance_wallet:", layout="centered")
 initialize_database()
+ensure_admin_profile()
 
 if "auth_stage" not in st.session_state:
     st.session_state.auth_stage = "phone"
@@ -455,7 +494,7 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     if view == "create_form":
         st.button("Back", icon=":material/arrow_back:", on_click=back_to_account_menu)
         st.subheader("Create virtual account")
-        st.caption(f"Money available for allocation: {Indian_money(available_to_allocate(phone))}")
+        st.caption(f"Money available for allocation: {available_label(phone)}")
         name = st.text_input("Name of virtual account", placeholder="For example, Travel")
         amount = st.number_input("Amount to allocate", min_value=0, step=500, value=0)
         description = st.text_input("Purpose", placeholder="Optional")
@@ -507,8 +546,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         with st.container(border=True):
             st.caption("MAIN ACCOUNT")
             st.markdown(f"**{user['bank']} ···· {user['last4']}**")
-            st.metric("Money available for allocation", Indian_money(free))
-            st.caption(f"Total bank balance: {Indian_money(user['bank_balance'])}")
+            st.metric("Money available for allocation", available_label(phone))
+            total_balance = "Unlimited" if is_admin(phone) else Indian_money(user["bank_balance"])
+            st.caption(f"Total bank balance: {total_balance}")
 
         st.subheader("Virtual accounts")
         if accounts:
@@ -546,7 +586,7 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             if action == "add":
                 st.divider()
                 st.markdown("**Add money from the main account**")
-                st.caption(f"Available to allocate: {Indian_money(available_to_allocate(phone))}")
+                st.caption(f"Available to allocate: {available_label(phone)}")
                 amount = st.number_input("Amount", min_value=1, step=500, key=f"add_amount_{selected_id}")
                 pin = st.text_input("Payment PIN", type="password", key=f"add_pin_{selected_id}")
                 submitted = st.button("Done", type="primary", width="stretch", key=f"add_submit_{selected_id}")
@@ -773,7 +813,7 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
 
             def label_source(source: str) -> str:
                 if source == "main":
-                    return f"Main account · {Indian_money(available_to_allocate(phone))} available"
+                    return f"Main account · {available_label(phone)} available"
                 account = next(item for item in accounts if item["account_id"] == source)
                 return f"{account['name']} · {Indian_money(account['balance'])} available"
 
@@ -798,23 +838,26 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             else:
                 try:
                     with connect() as db:
+                        result = None
                         if source_id == "main":
-                            result = db.execute(
-                                "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ? AND bank_balance - ? >= (SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE phone = ?)",
-                                (amount, phone, amount, phone),
-                            )
+                            if not is_admin(phone):
+                                result = db.execute(
+                                    "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ? AND bank_balance - ? >= (SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE phone = ?)",
+                                    (amount, phone, amount, phone),
+                                )
                         else:
-                            result = db.execute(
-                                "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ?",
-                                (amount, phone),
-                            )
+                            if not is_admin(phone):
+                                result = db.execute(
+                                    "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ?",
+                                    (amount, phone),
+                                )
                             account_result = db.execute(
                                 "UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ? AND balance >= ?",
                                 (amount, source_id, phone, amount),
                             )
                             if account_result.rowcount != 1:
                                 raise sqlite3.IntegrityError("Virtual account balance changed")
-                        if result.rowcount != 1:
+                        if result is not None and result.rowcount != 1:
                             raise sqlite3.IntegrityError("Main account balance changed")
                         db.execute(
                             """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)

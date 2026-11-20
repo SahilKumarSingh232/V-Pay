@@ -23,6 +23,7 @@ The app opens in your browser, usually at `http://localhost:8501`.
 
 - Enter any 10-digit phone number.
 - Use OTP `123456`.
+- Demo Admin profile: phone `1223334444`, PIN `282005`; its main account has unlimited simulated funds.
 - New users can create a demo profile, choose a sample bank, enter an optional starting demo balance (defaults to ₹0), and set a made-up payment PIN.
 - Returning users enter the same phone number and their demo PIN.
 
