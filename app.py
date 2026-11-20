@@ -200,6 +200,9 @@ def make_qr(value: str) -> bytes:
 
 def set_page(page: str) -> None:
     st.session_state.nav_page = page
+    if page == "My accounts":
+        st.session_state.account_page_view = "menu"
+        st.session_state.pop("selected_account_id", None)
 
 
 def open_qr_scanner() -> None:
@@ -330,11 +333,6 @@ def render_sidebar(user: dict[str, Any]) -> None:
         st.markdown("### :material/account_balance_wallet: VirtualPay")
         st.caption(f"{user['name']} · +91 {user['phone']}")
         st.divider()
-        st.caption("LINKED BANK")
-        st.write(f"**{user['bank']}**")
-        st.caption(f"Primary · account ending {user['last4']}")
-        st.metric("Main account", Indian_money(user["bank_balance"]))
-        st.success("Bank connection is active", icon=":material/verified_user:")
         if st.button("Sign out", icon=":material/logout:", width="stretch"):
             st.session_state.auth_stage = "phone"
             st.session_state.pop("user_phone", None)
@@ -377,12 +375,38 @@ def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
 def select_account(account_id: str) -> None:
     st.session_state.selected_account_id = account_id
     st.session_state.account_action = "overview"
+    st.session_state.account_page_view = "virtual"
     st.session_state.nav_page = "My accounts"
 
 
 def open_new_account() -> None:
     st.session_state.pop("selected_account_id", None)
-    st.session_state.account_action = "overview"
+    st.session_state.account_page_view = "create_pin"
+
+
+def open_main_account() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "main_pin"
+
+
+def show_main_account() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "main"
+
+
+def show_account_create_form() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "create_form"
+
+
+def back_to_main_account() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "main"
+
+
+def back_to_account_menu() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "menu"
 
 
 def set_account_action(action: str) -> None:
@@ -391,9 +415,100 @@ def set_account_action(action: str) -> None:
 
 def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> None:
     phone = user["phone"]
-    free = available_to_allocate(phone)
+    view = st.session_state.get("account_page_view", "menu")
     st.title("Account")
-    st.caption("Main account and your virtual account budgets")
+
+    if view == "menu":
+        st.caption("Choose an account option")
+        options = st.columns(2, gap="large")
+        options[0].button(
+            "Main account",
+            icon=":material/account_balance:",
+            width="stretch",
+            on_click=open_main_account,
+        )
+        options[1].button(
+            "Create virtual account",
+            icon=":material/add:",
+            width="stretch",
+            on_click=open_new_account,
+        )
+        return
+
+    if view in {"main_pin", "create_pin"}:
+        st.button("Back", icon=":material/arrow_back:", on_click=back_to_account_menu)
+        if view == "main_pin":
+            st.subheader("Main account")
+            st.caption("Enter your payment PIN to view the main account balance.")
+            form_key = "main_account_pin_form"
+        else:
+            st.subheader("Create virtual account")
+            st.caption("Enter your payment PIN to continue to the account form.")
+            form_key = "create_account_pin_form"
+        with st.form(form_key):
+            pin = st.text_input("Payment PIN", type="password", max_chars=6)
+            submitted = st.form_submit_button("Continue", type="primary", width="stretch")
+        if submitted:
+            if pin_digest(pin) != user["pin_hash"]:
+                st.error("The payment PIN is incorrect.")
+            elif view == "main_pin":
+                show_main_account()
+                st.rerun()
+            else:
+                show_account_create_form()
+                st.rerun()
+        return
+
+    if view == "create_form":
+        st.button("Back", icon=":material/arrow_back:", on_click=back_to_account_menu)
+        st.subheader("Create virtual account")
+        st.caption(f"Money available for allocation: {Indian_money(available_to_allocate(phone))}")
+        with st.form("create_account_form"):
+            name = st.text_input("Name of virtual account", placeholder="For example, Travel")
+            amount = st.number_input("Amount to allocate", min_value=0, step=500, value=0)
+            description = st.text_input("Purpose", placeholder="Optional")
+            emoji = st.selectbox("Icon", ["🎯", "🏠", "🎓", "💪", "🎁", "🐾", "🛍️", "✈️"])
+            submitted = st.form_submit_button("Done", type="primary", width="stretch")
+        if submitted:
+            fresh_free = available_to_allocate(phone)
+            if not name.strip():
+                st.error("Enter a name for this virtual account.")
+            elif any(item["name"].casefold() == name.strip().casefold() for item in accounts):
+                st.error("An account with that name already exists.")
+            elif amount > fresh_free:
+                st.error("The amount is greater than the money available for allocation.")
+            else:
+                account_id = secrets.token_hex(8)
+                with connect() as db:
+                    db.execute(
+                        """INSERT INTO accounts(account_id, phone, name, emoji, description,
+                           balance, budget, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (account_id, phone, name.strip(), emoji, description.strip() or "VirtualPay budget", int(amount), max(int(amount), 1000), datetime.now().isoformat(timespec="seconds")),
+                    )
+                    if amount:
+                        db.execute(
+                            """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            (phone, "Allocation added", "Starting allocation", name.strip(), int(amount), datetime.now().isoformat(timespec="seconds")),
+                        )
+                st.session_state.selected_account_id = account_id
+                st.session_state.account_page_view = "virtual"
+                st.session_state.account_action = "overview"
+                set_flash(f"{name.strip()} virtual account created.")
+                st.rerun()
+        return
+
+    if view not in {"main", "virtual"}:
+        st.session_state.account_page_view = "menu"
+        st.rerun()
+
+    if view == "main":
+        st.button("Back to account options", icon=":material/arrow_back:", on_click=back_to_account_menu)
+    else:
+        st.button("Back to main account", icon=":material/arrow_back:", on_click=back_to_main_account)
+
+    free = available_to_allocate(phone)
+    st.caption("Main account and virtual accounts")
 
     account_list_col, account_detail_col = st.columns([1, 1.2], gap="large")
     with account_list_col:
@@ -418,51 +533,12 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     )
         else:
             st.info("No virtual accounts yet. Create one to start setting money aside.")
-        st.button(
-            "＋ Create virtual account",
-            width="stretch",
-            on_click=open_new_account,
-            key="create_virtual_account_action",
-        )
-
     selected_id = st.session_state.get("selected_account_id")
     account = get_account(phone, selected_id) if selected_id else None
     with account_detail_col, st.container(border=True):
         if account is None:
-            st.subheader("Create virtual account")
-            st.caption("Choose a name and an optional starting allocation.")
-            with st.form("create_account_form"):
-                name = st.text_input("Name of virtual account", placeholder="For example, Travel")
-                amount = st.number_input("Amount to allocate", min_value=0, step=500, value=0)
-                description = st.text_input("Purpose", placeholder="Optional")
-                emoji = st.selectbox("Icon", ["🎯", "🏠", "🎓", "💪", "🎁", "🐾", "🛍️", "✈️"])
-                submitted = st.form_submit_button("Done", type="primary", width="stretch")
-            if submitted:
-                fresh_free = available_to_allocate(phone)
-                if not name.strip():
-                    st.error("Enter a name for this virtual account.")
-                elif any(item["name"].casefold() == name.strip().casefold() for item in accounts):
-                    st.error("An account with that name already exists.")
-                elif amount > fresh_free:
-                    st.error("The amount is greater than the money available for allocation.")
-                else:
-                    account_id = secrets.token_hex(8)
-                    with connect() as db:
-                        db.execute(
-                            """INSERT INTO accounts(account_id, phone, name, emoji, description,
-                               balance, budget, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (account_id, phone, name.strip(), emoji, description.strip() or "VirtualPay budget", int(amount), max(int(amount), 1000), datetime.now().isoformat(timespec="seconds")),
-                        )
-                        if amount:
-                            db.execute(
-                                """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
-                                   VALUES (?, ?, ?, ?, ?, ?)""",
-                                (phone, "Allocation added", "Starting allocation", name.strip(), int(amount), datetime.now().isoformat(timespec="seconds")),
-                            )
-                    st.session_state.selected_account_id = account_id
-                    st.session_state.account_action = "overview"
-                    set_flash(f"{name.strip()} virtual account created.")
-                    st.rerun()
+            st.subheader("Main account")
+            st.caption("Choose a virtual account from the list to manage it.")
         else:
             st.subheader(f"{account['emoji']} {account['name']}")
             st.metric("Available balance", Indian_money(account["balance"]))
