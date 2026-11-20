@@ -817,14 +817,9 @@ else:
         st.rerun()
     accounts = list_accounts(user["phone"])
     render_sidebar(user)
-    st.markdown("### :material/account_balance_wallet: VirtualPay")
-    page = st.segmented_control(
-        "Main navigation",
-        ["Overview", "My accounts", "Transfer money", "History"],
-        key="nav_page",
-        label_visibility="collapsed",
-        width="stretch",
-    )
+    page = st.session_state.get("nav_page", "Overview")
+    if page != "Overview":
+        st.button("Home", icon=":material/arrow_back:", on_click=set_page, args=("Overview",))
     if page != "Transfer money":
         st.session_state.camera_enabled = False
     render_flash()
