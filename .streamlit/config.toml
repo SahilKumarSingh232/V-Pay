@@ -6,5 +6,6 @@ secondaryBackgroundColor = "#ffffff"
 textColor = "#18251f"
 font = "sans-serif"
 headingFont = "sans-serif"
+baseFontSize = 18
 baseRadius = "0.75rem"
 showWidgetBorder = true

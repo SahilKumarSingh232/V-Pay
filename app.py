@@ -350,10 +350,6 @@ def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         st.markdown(f"### {user['name']}")
         st.write(f"Phone number  ·  +91 {user['phone']}")
         st.write(f"VirtualPay ID  ·  **{user['virtual_id']}**")
-        st.divider()
-        st.caption("MAIN ACCOUNT")
-        st.write(f"{user['bank']} ···· {user['last4']}")
-        st.metric("Balance", Indian_money(user["bank_balance"]))
     with qr_col, st.container(border=True):
         st.markdown("**Your QR code**")
         st.image(make_qr("virtualpay://receive/" + user["virtual_id"]), alt="QR code for your VirtualPay ID")
