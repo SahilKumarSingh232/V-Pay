@@ -72,6 +72,11 @@ def initialize_database() -> None:
                 recipient_name TEXT NOT NULL DEFAULT '',
                 UNIQUE(phone, recipient)
             );
+            CREATE TABLE IF NOT EXISTS transfer_receipts (
+                source_transaction_id INTEGER PRIMARY KEY,
+                recipient_phone TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
         recipient_columns = {row[1] for row in db.execute("PRAGMA table_info(recipients)")}
@@ -103,6 +108,58 @@ def get_user(phone: str) -> dict[str, Any] | None:
     with connect() as db:
         row = db.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
     return dict(row) if row else None
+
+
+def find_virtualpay_recipient(value: str) -> dict[str, Any] | None:
+    """Resolve an in-app recipient from a phone number or VirtualPay ID."""
+    recipient = value.strip().removeprefix("virtualpay://receive/")
+    with connect() as db:
+        if recipient.upper().startswith("VP-"):
+            row = db.execute(
+                "SELECT * FROM users WHERE upper(virtual_id) = upper(?)", (recipient,)
+            ).fetchone()
+        else:
+            digits = recipient.replace("+91", "").replace(" ", "").replace("-", "")
+            if len(digits) != 10 or not digits.isdigit():
+                return None
+            row = db.execute("SELECT * FROM users WHERE phone = ?", (digits,)).fetchone()
+    return dict(row) if row else None
+
+
+def repair_legacy_internal_transfers() -> None:
+    """Credit internal recipients for transfers recorded before incoming credits existed."""
+    with connect() as db:
+        pending = db.execute(
+            """SELECT t.transaction_id, t.phone, t.detail, t.amount, t.created_at, u.name AS sender_name
+               FROM transactions AS t
+               JOIN users AS u ON u.phone = t.phone
+               LEFT JOIN transfer_receipts AS r ON r.source_transaction_id = t.transaction_id
+               WHERE t.amount < 0 AND t.detail LIKE 'Transfer to %'
+                 AND r.source_transaction_id IS NULL
+               ORDER BY t.transaction_id"""
+        ).fetchall()
+    for transfer in pending:
+        recipient_value = transfer["detail"].removeprefix("Transfer to ")
+        recipient_user = find_virtualpay_recipient(recipient_value)
+        if recipient_user is None or recipient_user["phone"] == transfer["phone"]:
+            continue
+        received = -int(transfer["amount"])
+        when = transfer["created_at"]
+        with connect() as db:
+            if not is_admin(recipient_user["phone"]):
+                db.execute(
+                    "UPDATE users SET bank_balance = bank_balance + ? WHERE phone = ?",
+                    (received, recipient_user["phone"]),
+                )
+            db.execute(
+                """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (recipient_user["phone"], "Money received", f"From {transfer['sender_name']}", "Main account", received, when),
+            )
+            db.execute(
+                "INSERT INTO transfer_receipts(source_transaction_id, recipient_phone, created_at) VALUES (?, ?, ?)",
+                (transfer["transaction_id"], recipient_user["phone"], datetime.now().isoformat(timespec="seconds")),
+            )
 
 
 def list_accounts(phone: str) -> list[dict[str, Any]]:
@@ -257,9 +314,9 @@ def render_flash() -> None:
     if not flash:
         return
     if flash["kind"] == "error":
-        st.error(flash["message"], icon=":material/error:")
+        st.toast(flash["message"], icon="⚠️")
     else:
-        st.success(flash["message"], icon=":material/check_circle:")
+        st.toast(flash["message"], icon="✅")
 
 
 def authenticate(phone: str) -> None:
@@ -271,6 +328,7 @@ def authenticate(phone: str) -> None:
 st.set_page_config(page_title="VirtualPay", page_icon=":material/account_balance_wallet:", layout="centered")
 initialize_database()
 ensure_admin_profile()
+repair_legacy_internal_transfers()
 
 if "auth_stage" not in st.session_state:
     st.session_state.auth_stage = "phone"
@@ -482,7 +540,7 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         submitted = st.button("Continue", type="primary", width="stretch")
         if submitted:
             if pin_digest(pin) != user["pin_hash"]:
-                st.error("The payment PIN is incorrect.")
+                st.toast("The payment PIN is incorrect. No account details were changed.", icon="⚠️")
             elif view == "main_pin":
                 show_main_account()
                 st.rerun()
@@ -503,30 +561,34 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         if submitted:
             fresh_free = available_to_allocate(phone)
             if not name.strip():
-                st.error("Enter a name for this virtual account.")
+                st.toast("Enter a name for this virtual account.", icon="⚠️")
             elif any(item["name"].casefold() == name.strip().casefold() for item in accounts):
-                st.error("An account with that name already exists.")
+                st.toast("An account with that name already exists.", icon="⚠️")
             elif amount > fresh_free:
-                st.error("The amount is greater than the money available for allocation.")
+                st.toast("The amount is greater than the money available for allocation.", icon="⚠️")
             else:
                 account_id = secrets.token_hex(8)
-                with connect() as db:
-                    db.execute(
-                        """INSERT INTO accounts(account_id, phone, name, emoji, description,
-                           balance, budget, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (account_id, phone, name.strip(), emoji, description.strip() or "VirtualPay budget", int(amount), max(int(amount), 1000), datetime.now().isoformat(timespec="seconds")),
-                    )
-                    if amount:
+                try:
+                    with connect() as db:
                         db.execute(
-                            """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
-                               VALUES (?, ?, ?, ?, ?, ?)""",
-                            (phone, "Allocation added", "Starting allocation", name.strip(), int(amount), datetime.now().isoformat(timespec="seconds")),
+                            """INSERT INTO accounts(account_id, phone, name, emoji, description,
+                               balance, budget, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (account_id, phone, name.strip(), emoji, description.strip() or "VirtualPay budget", int(amount), max(int(amount), 1000), datetime.now().isoformat(timespec="seconds")),
                         )
-                st.session_state.selected_account_id = account_id
-                st.session_state.account_page_view = "virtual"
-                st.session_state.account_action = "overview"
-                set_flash(f"{name.strip()} virtual account created.")
-                st.rerun()
+                        if amount:
+                            db.execute(
+                                """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                                   VALUES (?, ?, ?, ?, ?, ?)""",
+                                (phone, "Allocation added", "Starting allocation", name.strip(), int(amount), datetime.now().isoformat(timespec="seconds")),
+                            )
+                except sqlite3.Error:
+                    st.toast("Virtual account creation failed. No account was created.", icon="⚠️")
+                else:
+                    st.session_state.selected_account_id = account_id
+                    st.session_state.account_page_view = "virtual"
+                    st.session_state.account_action = "overview"
+                    set_flash(f"{name.strip()} virtual account created successfully.")
+                    st.rerun()
         return
 
     if view not in {"main", "virtual"}:
@@ -593,9 +655,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 if submitted:
                     current_free = available_to_allocate(phone)
                     if pin_digest(pin) != user["pin_hash"]:
-                        st.error("The payment PIN is incorrect. No money was moved.")
+                        st.toast("The payment PIN is incorrect. No money was moved.", icon="⚠️")
                     elif amount > current_free:
-                        st.error("There is not enough money available in the main account.")
+                        st.toast("There is not enough money available in the main account.", icon="⚠️")
                     else:
                         try:
                             with connect() as db:
@@ -624,9 +686,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 submitted = st.button("Done", type="primary", width="stretch", key=f"withdraw_submit_{selected_id}")
                 if submitted:
                     if pin_digest(pin) != user["pin_hash"]:
-                        st.error("The payment PIN is incorrect. No money was moved.")
+                        st.toast("The payment PIN is incorrect. No money was moved.", icon="⚠️")
                     elif amount > account["balance"]:
-                        st.error("There is not enough money in this virtual account.")
+                        st.toast("There is not enough money in this virtual account.", icon="⚠️")
                     else:
                         try:
                             with connect() as db:
@@ -665,11 +727,11 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     if submitted:
                         target = get_account(phone, target_id)
                         if pin_digest(pin) != user["pin_hash"]:
-                            st.error("The payment PIN is incorrect. No money was moved.")
+                            st.toast("The payment PIN is incorrect. No money was moved.", icon="⚠️")
                         elif amount > account["balance"]:
-                            st.error("There is not enough money in this virtual account.")
+                            st.toast("There is not enough money in this virtual account.", icon="⚠️")
                         elif target is None:
-                            st.error("The destination account could not be found.")
+                            st.toast("The destination account could not be found.", icon="⚠️")
                         else:
                             try:
                                 with connect() as db:
@@ -701,20 +763,26 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 rename_submitted = st.button("Save changes", key=f"rename_submit_{selected_id}")
                 if rename_submitted:
                     if not new_name.strip():
-                        st.error("Account name cannot be empty.")
+                        st.toast("Account name cannot be empty. Nothing was changed.", icon="⚠️")
                     elif any(item["account_id"] != selected_id and item["name"].casefold() == new_name.strip().casefold() for item in accounts):
-                        st.error("An account with that name already exists.")
+                        st.toast("An account with that name already exists. Nothing was changed.", icon="⚠️")
                     else:
-                        with connect() as db:
-                            db.execute(
-                                "UPDATE accounts SET name = ?, description = ? WHERE account_id = ? AND phone = ?",
-                                (new_name.strip(), new_description.strip(), selected_id, phone),
-                            )
-                            db.execute(
-                                "UPDATE transactions SET account_name = ? WHERE phone = ? AND account_name = ?",
-                                (new_name.strip(), phone, account["name"]),
-                            )
-                        set_flash("Virtual account updated successfully.")
+                        try:
+                            with connect() as db:
+                                result = db.execute(
+                                    "UPDATE accounts SET name = ?, description = ? WHERE account_id = ? AND phone = ?",
+                                    (new_name.strip(), new_description.strip(), selected_id, phone),
+                                )
+                                if result.rowcount != 1:
+                                    raise sqlite3.IntegrityError("Virtual account was not found")
+                                db.execute(
+                                    "UPDATE transactions SET account_name = ? WHERE phone = ? AND account_name = ?",
+                                    (new_name.strip(), phone, account["name"]),
+                                )
+                        except sqlite3.Error:
+                            set_flash("Virtual account update failed. No changes were saved.", "error")
+                        else:
+                            set_flash("Virtual account updated successfully.")
                         st.rerun()
                 confirm = st.checkbox(
                     "I understand the allocation will return to money available in the main account.",
@@ -794,10 +862,11 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             )
             if recipient_choice == "manual":
                 recipient = st.text_input(
-                    "Phone number, UPI ID, or VirtualPay ID",
+                    "Phone number or VirtualPay ID",
                     value=st.session_state.get("transfer_scan_recipient", ""),
                     placeholder="For example, 9876543210 or VP-ABC123",
                 )
+                st.caption("The recipient must have a VirtualPay demo account to receive this simulated transfer.")
                 recipient_name = st.text_input("Recipient name", placeholder="Optional")
             else:
                 recipient_data = saved_by_id[recipient_choice]
@@ -824,17 +893,22 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
 
     if submitted:
         recipient = recipient.strip()
-        display_name = recipient_name.strip() or recipient
+        recipient_user = find_virtualpay_recipient(recipient) if recipient else None
+        display_name = recipient_name.strip() or (recipient_user["name"] if recipient_user else recipient)
         if not recipient:
-            st.error("Enter a phone number, UPI ID, or VirtualPay ID.")
+            st.toast("Enter a phone number or VirtualPay ID.", icon="⚠️")
         elif pin_digest(pin) != user["pin_hash"]:
-            st.error("The payment PIN is incorrect. No transfer was made.")
+            st.toast("The payment PIN is incorrect. No transfer was made.", icon="⚠️")
+        elif recipient_user is None:
+            st.toast("No VirtualPay account matched. No money was sent.", icon="⚠️")
+        elif recipient_user["phone"] == phone:
+            st.toast("Choose another person's account. No money was sent.", icon="⚠️")
         else:
             account = get_account(phone, source_id) if source_id != "main" else None
             if source_id == "main" and amount > available_to_allocate(phone):
-                st.error("There is not enough money available in the main account.")
+                st.toast("There is not enough money available in the main account.", icon="⚠️")
             elif account is not None and amount > account["balance"]:
-                st.error(f"There is not enough money in {account['name']}.")
+                st.toast(f"There is not enough money in {account['name']}.", icon="⚠️")
             else:
                 try:
                     with connect() as db:
@@ -859,10 +933,27 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                                 raise sqlite3.IntegrityError("Virtual account balance changed")
                         if result is not None and result.rowcount != 1:
                             raise sqlite3.IntegrityError("Main account balance changed")
+                        if not is_admin(recipient_user["phone"]):
+                            receiver_result = db.execute(
+                                "UPDATE users SET bank_balance = bank_balance + ? WHERE phone = ?",
+                                (amount, recipient_user["phone"]),
+                            )
+                            if receiver_result.rowcount != 1:
+                                raise sqlite3.IntegrityError("Recipient account was not found")
+                        transferred_at = datetime.now().isoformat(timespec="seconds")
+                        sender_transaction = db.execute(
+                            """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                               VALUES (?, ?, ?, ?, ?, ?)""",
+                            (phone, display_name, "Transfer to " + recipient_user["name"], account["name"] if account else "Main account", -int(amount), transferred_at),
+                        )
                         db.execute(
                             """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
                                VALUES (?, ?, ?, ?, ?, ?)""",
-                            (phone, display_name, "Transfer to " + recipient, account["name"] if account else "Main account", -int(amount), datetime.now().isoformat(timespec="seconds")),
+                            (recipient_user["phone"], "Money received", f"From {user['name']}", "Main account", int(amount), transferred_at),
+                        )
+                        db.execute(
+                            "INSERT INTO transfer_receipts(source_transaction_id, recipient_phone, created_at) VALUES (?, ?, ?)",
+                            (sender_transaction.lastrowid, recipient_user["phone"], transferred_at),
                         )
                         db.execute(
                             """INSERT INTO recipients(phone, recipient, recipient_name) VALUES (?, ?, ?)
@@ -875,7 +966,7 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     set_flash("Transfer failed. No account balance was changed.", "error")
                 else:
                     st.session_state.transfer_scan_recipient = ""
-                    set_flash(f"Transfer successful: {Indian_money(amount)} sent to {display_name}.")
+                    set_flash(f"Transfer successful: {Indian_money(amount)} sent to {display_name} and credited to their main account.")
                 st.rerun()
 
 def show_transaction_table(phone: str, limit: int | None = None) -> None:

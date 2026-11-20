@@ -36,7 +36,7 @@ QR codes and camera scanning are for VirtualPay demo IDs. The camera stays off u
 - Sign in with a phone number and demo OTP. New profiles get a main account only; the starting demo balance defaults to ₹0, and virtual-account history starts empty.
 - The home screen shows the profile, VirtualPay ID and QR, plus Account, Transfer money, History, and Scan QR actions.
 - The Account page starts with two choices: Main account and Create virtual account. Each asks for the demo PIN before showing the main-account balance or opening the creation form. Afterward, manage virtual accounts by adding, withdrawing, or moving allocations with PIN confirmation.
-- Transfers support saved recipients, a recipient name and ID, a chosen source account, and demo PIN confirmation. The camera scanner opens only after an explicit scan action.
+- Transfers between VirtualPay demo users accept a phone number or VirtualPay ID, credit the recipient's main account, and add an incoming history entry. The sender confirms with the demo PIN; external bank and UPI transfers are not sent. The camera scanner opens only after an explicit scan action.
 
 ## Backend and user data
 
