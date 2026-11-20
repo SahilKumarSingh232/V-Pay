@@ -647,6 +647,13 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             st.subheader("Select a virtual account")
             st.caption("Choose one from the list to view and manage its allocation.")
         else:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                st.button(
+                    "Close",
+                    icon=":material/close:",
+                    on_click=back_to_virtual_accounts,
+                    key=f"close_account_details_{selected_id}",
+                )
             st.subheader(f"{account['emoji']} {account['name']}")
             st.metric("Available balance", Indian_money(account["balance"]))
             st.caption(f"Budget: {Indian_money(account['budget'])} · {account['description']}")
