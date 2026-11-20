@@ -268,9 +268,8 @@ def render_login() -> None:
             st.subheader("Verify your number")
             st.caption(f"Enter the one-time code for +91 {st.session_state.pending_phone}.")
             st.info(f"Demo mode: use **{OTP_DEMO}**. No SMS is sent.")
-            with st.form("otp_form"):
-                otp = st.text_input("One-time code", max_chars=6, placeholder="6-digit code")
-                submitted = st.form_submit_button("Verify", type="primary", width="stretch")
+            otp = st.text_input("One-time code", placeholder="6-digit code")
+            submitted = st.button("Verify", type="primary", width="stretch")
             if submitted:
                 phone = st.session_state.pending_phone
                 if otp != OTP_DEMO:
@@ -288,17 +287,16 @@ def render_login() -> None:
         elif stage == "register":
             st.subheader("Make it yours")
             st.caption("Create a demo profile and link a sample bank account.")
-            with st.form("register_form"):
-                name = st.text_input("Full name", placeholder="Your name")
-                bank = st.selectbox("Bank", BANKS)
-                last4 = st.text_input("Last 4 digits of account", max_chars=4, placeholder="2841")
-                bank_balance = st.number_input(
-                    "Main account balance (demo)", min_value=0, step=1000, value=0,
-                    help="Starts at ₹0. Enter a sample balance if you want to try allocating money.",
-                )
-                pin = st.text_input("Create demo payment PIN", type="password", max_chars=6)
-                st.caption("Use a made-up PIN. Never enter your real bank or UPI PIN.")
-                submitted = st.form_submit_button("Create my account", type="primary", width="stretch")
+            name = st.text_input("Full name", placeholder="Your name")
+            bank = st.selectbox("Bank", BANKS)
+            last4 = st.text_input("Last 4 digits of account", placeholder="2841")
+            bank_balance = st.number_input(
+                "Main account balance (demo)", min_value=0, step=1000, value=0,
+                help="Starts at ₹0. Enter a sample balance if you want to try allocating money.",
+            )
+            pin = st.text_input("Create demo payment PIN", type="password")
+            st.caption("Use a made-up PIN. Never enter your real bank or UPI PIN.")
+            submitted = st.button("Create my account", type="primary", width="stretch")
             if submitted:
                 if not name.strip():
                     st.error("Enter your name.")
@@ -314,9 +312,8 @@ def render_login() -> None:
         elif stage == "pin":
             st.subheader("Welcome back")
             st.caption("Enter your demo payment PIN to continue.")
-            with st.form("pin_form"):
-                pin = st.text_input("Demo payment PIN", type="password", max_chars=6)
-                submitted = st.form_submit_button("Sign in", type="primary", width="stretch")
+            pin = st.text_input("Demo payment PIN", type="password")
+            submitted = st.button("Sign in", type="primary", width="stretch")
             if submitted:
                 user = get_user(st.session_state.pending_phone)
                 if user and pin_digest(pin) == user["pin_hash"]:
@@ -439,14 +436,11 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         if view == "main_pin":
             st.subheader("Main account")
             st.caption("Enter your payment PIN to view the main account balance.")
-            form_key = "main_account_pin_form"
         else:
             st.subheader("Create virtual account")
             st.caption("Enter your payment PIN to continue to the account form.")
-            form_key = "create_account_pin_form"
-        with st.form(form_key):
-            pin = st.text_input("Payment PIN", type="password", max_chars=6)
-            submitted = st.form_submit_button("Continue", type="primary", width="stretch")
+        pin = st.text_input("Payment PIN", type="password")
+        submitted = st.button("Continue", type="primary", width="stretch")
         if submitted:
             if pin_digest(pin) != user["pin_hash"]:
                 st.error("The payment PIN is incorrect.")
@@ -462,12 +456,11 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         st.button("Back", icon=":material/arrow_back:", on_click=back_to_account_menu)
         st.subheader("Create virtual account")
         st.caption(f"Money available for allocation: {Indian_money(available_to_allocate(phone))}")
-        with st.form("create_account_form"):
-            name = st.text_input("Name of virtual account", placeholder="For example, Travel")
-            amount = st.number_input("Amount to allocate", min_value=0, step=500, value=0)
-            description = st.text_input("Purpose", placeholder="Optional")
-            emoji = st.selectbox("Icon", ["🎯", "🏠", "🎓", "💪", "🎁", "🐾", "🛍️", "✈️"])
-            submitted = st.form_submit_button("Done", type="primary", width="stretch")
+        name = st.text_input("Name of virtual account", placeholder="For example, Travel")
+        amount = st.number_input("Amount to allocate", min_value=0, step=500, value=0)
+        description = st.text_input("Purpose", placeholder="Optional")
+        emoji = st.selectbox("Icon", ["🎯", "🏠", "🎓", "💪", "🎁", "🐾", "🛍️", "✈️"])
+        submitted = st.button("Done", type="primary", width="stretch")
         if submitted:
             fresh_free = available_to_allocate(phone)
             if not name.strip():
@@ -554,10 +547,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 st.divider()
                 st.markdown("**Add money from the main account**")
                 st.caption(f"Available to allocate: {Indian_money(available_to_allocate(phone))}")
-                with st.form(f"add_allocation_form_{selected_id}"):
-                    amount = st.number_input("Amount", min_value=1, step=500, key=f"add_amount_{selected_id}")
-                    pin = st.text_input("Payment PIN", type="password", max_chars=6, key=f"add_pin_{selected_id}")
-                    submitted = st.form_submit_button("Done", type="primary", width="stretch")
+                amount = st.number_input("Amount", min_value=1, step=500, key=f"add_amount_{selected_id}")
+                pin = st.text_input("Payment PIN", type="password", key=f"add_pin_{selected_id}")
+                submitted = st.button("Done", type="primary", width="stretch", key=f"add_submit_{selected_id}")
                 if submitted:
                     current_free = available_to_allocate(phone)
                     if pin_digest(pin) != user["pin_hash"]:
@@ -587,10 +579,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             elif action == "withdraw":
                 st.divider()
                 st.markdown("**Withdraw to the main account's available balance**")
-                with st.form(f"withdraw_form_{selected_id}"):
-                    amount = st.number_input("Amount", min_value=1, step=500, key=f"withdraw_amount_{selected_id}")
-                    pin = st.text_input("Payment PIN", type="password", max_chars=6, key=f"withdraw_pin_{selected_id}")
-                    submitted = st.form_submit_button("Done", type="primary", width="stretch")
+                amount = st.number_input("Amount", min_value=1, step=500, key=f"withdraw_amount_{selected_id}")
+                pin = st.text_input("Payment PIN", type="password", key=f"withdraw_pin_{selected_id}")
+                submitted = st.button("Done", type="primary", width="stretch", key=f"withdraw_submit_{selected_id}")
                 if submitted:
                     if pin_digest(pin) != user["pin_hash"]:
                         st.error("The payment PIN is incorrect. No money was moved.")
@@ -623,15 +614,14 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     st.info("Create another virtual account before moving an allocation.")
                 else:
                     st.markdown("**Move money to another virtual account**")
-                    with st.form(f"move_allocation_form_{selected_id}"):
-                        target_id = st.selectbox(
-                            "Destination account",
-                            [item["account_id"] for item in destinations],
-                            format_func=lambda value: next(item["name"] for item in destinations if item["account_id"] == value),
-                        )
-                        amount = st.number_input("Amount", min_value=1, step=500, key=f"move_amount_{selected_id}")
-                        pin = st.text_input("Payment PIN", type="password", max_chars=6, key=f"move_pin_{selected_id}")
-                        submitted = st.form_submit_button("Done", type="primary", width="stretch")
+                    target_id = st.selectbox(
+                        "Destination account",
+                        [item["account_id"] for item in destinations],
+                        format_func=lambda value: next(item["name"] for item in destinations if item["account_id"] == value),
+                    )
+                    amount = st.number_input("Amount", min_value=1, step=500, key=f"move_amount_{selected_id}")
+                    pin = st.text_input("Payment PIN", type="password", key=f"move_pin_{selected_id}")
+                    submitted = st.button("Done", type="primary", width="stretch", key=f"move_submit_{selected_id}")
                     if submitted:
                         target = get_account(phone, target_id)
                         if pin_digest(pin) != user["pin_hash"]:
@@ -666,10 +656,9 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
 
             elif action == "manage":
                 st.divider()
-                with st.form(f"rename_account_form_{selected_id}"):
-                    new_name = st.text_input("Virtual account name", value=account["name"])
-                    new_description = st.text_input("Purpose", value=account["description"])
-                    rename_submitted = st.form_submit_button("Save changes")
+                new_name = st.text_input("Virtual account name", value=account["name"])
+                new_description = st.text_input("Purpose", value=account["description"])
+                rename_submitted = st.button("Save changes", key=f"rename_submit_{selected_id}")
                 if rename_submitted:
                     if not new_name.strip():
                         st.error("Account name cannot be empty.")
@@ -750,49 +739,48 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 st.warning("QR decoding is unavailable. Enter the recipient ID manually.")
 
     with st.container(border=True):
-        with st.form("transfer_form"):
-            recipient_col, payment_col = st.columns([1, 1], gap="large")
-            with recipient_col:
-                st.subheader("Recipient")
-                options = ["manual", *saved_by_id.keys()]
-                recipient_choice = st.radio(
-                    "Previously paid",
-                    options,
-                    format_func=lambda value: "Enter a new recipient" if value == "manual" else (
-                        f"{saved_by_id[value]['recipient_name']} · {value}"
-                        if saved_by_id[value]["recipient_name"] else value
-                    ),
-                    key="transfer_recipient_choice",
+        recipient_col, payment_col = st.columns([1, 1], gap="large")
+        with recipient_col:
+            st.subheader("Recipient")
+            options = ["manual", *saved_by_id.keys()]
+            recipient_choice = st.radio(
+                "Previously paid",
+                options,
+                format_func=lambda value: "Enter a new recipient" if value == "manual" else (
+                    f"{saved_by_id[value]['recipient_name']} · {value}"
+                    if saved_by_id[value]["recipient_name"] else value
+                ),
+                key="transfer_recipient_choice",
+            )
+            if recipient_choice == "manual":
+                recipient = st.text_input(
+                    "Phone number, UPI ID, or VirtualPay ID",
+                    value=st.session_state.get("transfer_scan_recipient", ""),
+                    placeholder="For example, 9876543210 or VP-ABC123",
                 )
-                if recipient_choice == "manual":
-                    recipient = st.text_input(
-                        "Phone number, UPI ID, or VirtualPay ID",
-                        value=st.session_state.get("transfer_scan_recipient", ""),
-                        placeholder="For example, 9876543210 or VP-ABC123",
-                    )
-                    recipient_name = st.text_input("Recipient name", placeholder="Optional")
-                else:
-                    recipient_data = saved_by_id[recipient_choice]
-                    recipient = recipient_data["recipient"]
-                    recipient_name = recipient_data["recipient_name"]
-                    st.write(f"**{recipient_name or recipient}**")
-                    st.caption(recipient)
+                recipient_name = st.text_input("Recipient name", placeholder="Optional")
+            else:
+                recipient_data = saved_by_id[recipient_choice]
+                recipient = recipient_data["recipient"]
+                recipient_name = recipient_data["recipient_name"]
+                st.write(f"**{recipient_name or recipient}**")
+                st.caption(recipient)
 
-            with payment_col:
-                st.subheader("Payment")
-                amount = st.number_input("Amount", min_value=1, step=100)
-                choices = ["main"] + [account["account_id"] for account in accounts]
+        with payment_col:
+            st.subheader("Payment")
+            amount = st.number_input("Amount", min_value=1, step=100)
+            choices = ["main"] + [account["account_id"] for account in accounts]
 
-                def label_source(source: str) -> str:
-                    if source == "main":
-                        return f"Main account · {Indian_money(available_to_allocate(phone))} available"
-                    account = next(item for item in accounts if item["account_id"] == source)
-                    return f"{account['name']} · {Indian_money(account['balance'])} available"
+            def label_source(source: str) -> str:
+                if source == "main":
+                    return f"Main account · {Indian_money(available_to_allocate(phone))} available"
+                account = next(item for item in accounts if item["account_id"] == source)
+                return f"{account['name']} · {Indian_money(account['balance'])} available"
 
-                source_id = st.selectbox("Choose account", choices, format_func=label_source)
-                pin = st.text_input("Payment PIN", type="password", max_chars=6)
-                st.caption("Use your demo PIN. Never enter your real UPI PIN.")
-                submitted = st.form_submit_button("Done", type="primary", width="stretch")
+            source_id = st.selectbox("Choose account", choices, format_func=label_source)
+            pin = st.text_input("Payment PIN", type="password")
+            st.caption("Use your demo PIN. Never enter your real UPI PIN.")
+            submitted = st.button("Done", type="primary", width="stretch")
 
     if submitted:
         recipient = recipient.strip()
