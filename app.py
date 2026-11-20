@@ -67,10 +67,14 @@ def initialize_database() -> None:
                 recipient_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 phone TEXT NOT NULL REFERENCES users(phone) ON DELETE CASCADE,
                 recipient TEXT NOT NULL,
+                recipient_name TEXT NOT NULL DEFAULT '',
                 UNIQUE(phone, recipient)
             );
             """
         )
+        recipient_columns = {row[1] for row in db.execute("PRAGMA table_info(recipients)")}
+        if "recipient_name" not in recipient_columns:
+            db.execute("ALTER TABLE recipients ADD COLUMN recipient_name TEXT NOT NULL DEFAULT ''")
 
 
 def Indian_money(value: int | float) -> str:
@@ -144,21 +148,24 @@ def create_user(phone: str, name: str, bank: str, last4: str, pin: str, bank_bal
         )
 
 
-def record_recipient(phone: str, recipient: str) -> None:
+def record_recipient(phone: str, recipient: str, name: str = "") -> None:
     with connect() as db:
         db.execute(
-            "INSERT OR IGNORE INTO recipients(phone, recipient) VALUES (?, ?)",
-            (phone, recipient),
+            """INSERT INTO recipients(phone, recipient, recipient_name) VALUES (?, ?, ?)
+               ON CONFLICT(phone, recipient) DO UPDATE SET recipient_name =
+               CASE WHEN excluded.recipient_name = '' THEN recipients.recipient_name
+                    ELSE excluded.recipient_name END""",
+            (phone, recipient, name.strip()),
         )
 
 
-def list_recipients(phone: str) -> list[str]:
+def list_recipients(phone: str) -> list[dict[str, str]]:
     with connect() as db:
         rows = db.execute(
-            "SELECT recipient FROM recipients WHERE phone = ? ORDER BY recipient_id DESC LIMIT 5",
+            "SELECT recipient, recipient_name FROM recipients WHERE phone = ? ORDER BY recipient_id DESC LIMIT 5",
             (phone,),
         ).fetchall()
-    return [row["recipient"] for row in rows]
+    return [dict(row) for row in rows]
 
 
 def get_transactions(phone: str) -> pd.DataFrame:
@@ -195,9 +202,9 @@ def set_page(page: str) -> None:
     st.session_state.nav_page = page
 
 
-def set_accounts_section(section: str) -> None:
-    st.session_state.nav_page = "My accounts"
-    st.session_state.account_section = section
+def open_qr_scanner() -> None:
+    st.session_state.nav_page = "Transfer money"
+    st.session_state.camera_enabled = True
 
 
 def set_flash(message: str, kind: str = "success") -> None:
@@ -342,19 +349,26 @@ def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     st.title(f"Good morning, {user['name'].split()[0]}")
     st.write("Give every rupee a purpose. You're doing great.")
 
-    with st.container(horizontal=True, horizontal_alignment="left"):
+    with st.container(horizontal=True, horizontal_alignment="left", wrap=True):
+        st.button("Account", icon=":material/account_balance:", on_click=set_page, args=("My accounts",))
         st.button("Transfer money", icon=":material/swap_horiz:", type="primary", on_click=set_page, args=("Transfer money",))
-        st.button("My receiving QR", icon=":material/qr_code:", on_click=set_accounts_section, args=("Receive money",))
-        st.button("View activity", icon=":material/history:", on_click=set_page, args=("Activity",))
+        st.button("History", icon=":material/history:", on_click=set_page, args=("History",))
+        st.button("Scan QR", icon=":material/qr_code_scanner:", on_click=open_qr_scanner)
 
-    with st.container(border=True):
-        bank_col, balance_col = st.columns([1.3, 1], vertical_alignment="center")
-        with bank_col:
-            st.caption("MAIN ACCOUNT")
-            st.markdown(f"**{user['bank']} ···· {user['last4']}**")
-            st.caption("Your linked bank account")
-        with balance_col:
-            st.metric("Bank balance", Indian_money(user["bank_balance"]))
+    profile_col, qr_col = st.columns([1.35, 1], vertical_alignment="center")
+    with profile_col, st.container(border=True):
+        st.caption("YOUR PROFILE")
+        st.markdown(f"**{user['name']}**")
+        st.caption(f"Phone · +91 {user['phone']}")
+        st.caption(f"VirtualPay ID · {user['virtual_id']}")
+        st.divider()
+        st.caption("MAIN ACCOUNT")
+        st.markdown(f"**{user['bank']} ···· {user['last4']}**")
+        st.metric("Bank balance", Indian_money(user["bank_balance"]))
+    with qr_col, st.container(border=True):
+        st.markdown("**Your receiving QR**")
+        st.image(make_qr("virtualpay://receive/" + user["virtual_id"]), alt="QR code for your VirtualPay ID")
+        st.caption("Share your VirtualPay ID to receive demo transfers.")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Allocated to budgets", Indian_money(allocated), border=True)
@@ -406,7 +420,7 @@ def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             )
         st.caption("Virtual accounts are budget allocations. Your money stays in your linked bank account.")
 
-    st.subheader("Recent activity")
+    st.subheader("Recent history")
     show_transaction_table(user["phone"], limit=5)
 
 
@@ -420,7 +434,28 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     phone = user["phone"]
     st.title("Virtual accounts")
     st.write("Create budgets for the things that matter. Every rupee stays in your bank.")
-    st.metric("Main account balance", Indian_money(user["bank_balance"]))
+    main_balance, available_balance = st.columns(2)
+    main_balance.metric("Main account balance", Indian_money(user["bank_balance"]))
+    available_balance.metric("Available for allocation", Indian_money(available_to_allocate(phone)))
+
+    st.subheader("Your virtual accounts")
+    if accounts:
+        with st.grid("auto", min_column_width=220, gap="small"):
+            for account in accounts:
+                with st.container(border=True):
+                    st.markdown(f"### {account['emoji']} {account['name']}")
+                    st.metric("Allocated", Indian_money(account["balance"]))
+                    st.progress(
+                        min(account["balance"] / max(account["budget"], 1), 1.0),
+                        text=f"Budget: {Indian_money(account['budget'])}",
+                    )
+                    st.button(
+                        "Manage",
+                        key=f"account_page_manage_{account['account_id']}",
+                        on_click=lambda account_id=account["account_id"]: select_account(account_id),
+                    )
+    else:
+        st.info("Only your main account is set up. Create a virtual account when you’re ready.")
 
     if not accounts and st.session_state.get("account_section") == "Manage accounts":
         st.session_state.account_section = "Create account"
@@ -492,24 +527,70 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     st.image(make_qr("virtualpay://receive/VP-" + account["account_id"][-6:].upper()), alt="QR code for this virtual account")
                     st.caption("QR is a demo identifier; it does not initiate a real payment.")
 
-                add_tab, move_tab, edit_tab = st.tabs(["Add allocation", "Move allocation", "Edit or delete"])
+                add_tab, withdraw_tab, move_tab, edit_tab = st.tabs(
+                    ["Add money", "Withdraw money", "Move to another account", "Rename or delete"]
+                )
                 with add_tab:
                     free = available_to_allocate(phone)
                     st.caption(f"Available in main account: {Indian_money(free)}")
                     with st.form("add_allocation_form"):
                         amount = st.number_input("Amount to add", min_value=1, step=500, key="add_allocation_amount")
+                        pin = st.text_input("Demo payment PIN", type="password", max_chars=6, key="add_allocation_pin")
                         submitted = st.form_submit_button("Add allocation", type="primary")
                     if submitted:
-                        if amount > free:
+                        if pin_digest(pin) != user["pin_hash"]:
+                            st.error("That demo PIN does not match.")
+                        elif amount > free:
                             st.error("That is more than your available bank balance.")
                         else:
-                            with connect() as db:
-                                db.execute(
-                                    "UPDATE accounts SET balance = balance + ?, budget = MAX(budget, balance + ?) WHERE account_id = ? AND phone = ?",
-                                    (amount, amount, selected_id, phone),
-                                )
-                            add_transaction(phone, "Allocation added", "Budget top-up", account["name"], int(amount))
-                            st.success(f"{Indian_money(amount)} allocated to {account['name']}.")
+                            try:
+                                with connect() as db:
+                                    result = db.execute(
+                                        "UPDATE accounts SET balance = balance + ?, budget = MAX(budget, balance + ?) WHERE account_id = ? AND phone = ?",
+                                        (amount, amount, selected_id, phone),
+                                    )
+                                    if result.rowcount != 1:
+                                        raise sqlite3.IntegrityError("Virtual account no longer exists")
+                                    db.execute(
+                                        """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                                           VALUES (?, ?, ?, ?, ?, ?)""",
+                                        (phone, "Allocation added", "Added from main account", account["name"], int(amount), datetime.now().isoformat(timespec="seconds")),
+                                    )
+                            except sqlite3.Error:
+                                set_flash("Add allocation failed. No money was moved.", "error")
+                            else:
+                                set_flash(f"Added {Indian_money(amount)} to {account['name']}.")
+                            st.rerun()
+
+                with withdraw_tab:
+                    st.caption("Withdrawn allocation returns to the main account's available balance.")
+                    with st.form("withdraw_allocation_form"):
+                        amount = st.number_input("Amount to withdraw", min_value=1, step=500, key="withdraw_allocation_amount")
+                        pin = st.text_input("Demo payment PIN", type="password", max_chars=6, key="withdraw_allocation_pin")
+                        submitted = st.form_submit_button("Withdraw to main account")
+                    if submitted:
+                        if pin_digest(pin) != user["pin_hash"]:
+                            st.error("That demo PIN does not match.")
+                        elif amount > account["balance"]:
+                            st.error("That is more than this account's available allocation.")
+                        else:
+                            try:
+                                with connect() as db:
+                                    result = db.execute(
+                                        "UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ? AND balance >= ?",
+                                        (amount, selected_id, phone, amount),
+                                    )
+                                    if result.rowcount != 1:
+                                        raise sqlite3.IntegrityError("Allocation changed before withdrawal completed")
+                                    db.execute(
+                                        """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                                           VALUES (?, ?, ?, ?, ?, ?)""",
+                                        (phone, "Allocation withdrawn", "Returned to main account", account["name"], int(amount), datetime.now().isoformat(timespec="seconds")),
+                                    )
+                            except sqlite3.Error:
+                                set_flash("Withdrawal failed. No allocation was changed.", "error")
+                            else:
+                                set_flash(f"Withdrawn {Indian_money(amount)} from {account['name']} to the main account.")
                             st.rerun()
 
                 with move_tab:
@@ -524,9 +605,12 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                                 format_func=lambda account_id: next(a["name"] for a in destinations if a["account_id"] == account_id),
                             )
                             amount = st.number_input("Amount to move", min_value=1, step=500, key="move_allocation_amount")
+                            pin = st.text_input("Demo payment PIN", type="password", max_chars=6, key="move_allocation_pin")
                             submitted = st.form_submit_button("Move allocation")
                         if submitted:
-                            if amount > account["balance"]:
+                            if pin_digest(pin) != user["pin_hash"]:
+                                st.error("That demo PIN does not match.")
+                            elif amount > account["balance"]:
                                 st.error("That is more than this account's current allocation.")
                             else:
                                 target = get_account(phone, target_id)
@@ -586,6 +670,12 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                             set_flash("Delete failed. The account is still available.", "error")
                         else:
                             set_flash(f"Deleted {account['name']}. Its allocation is available in the main account.")
+                            st.session_state.pop("manage_account_select", None)
+                            remaining = [item["account_id"] for item in accounts if item["account_id"] != selected_id]
+                            if remaining:
+                                st.session_state.selected_account_id = remaining[0]
+                            else:
+                                st.session_state.pop("selected_account_id", None)
                         st.rerun()
 
     elif section == "Receive money":
@@ -601,8 +691,25 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     st.info("This is a simulation. No bank or UPI payment is sent.", icon=":material/info:")
     phone = user["phone"]
     saved = list_recipients(phone)
-    if saved:
-        st.caption("Recently used recipients: " + " · ".join(saved))
+    saved_by_id = {item["recipient"]: item for item in saved}
+    recipient_choice = st.selectbox(
+        "Saved recipients",
+        ["", *saved_by_id.keys()],
+        format_func=lambda value: "Enter a new recipient" if not value else (
+            f"{saved_by_id[value]['recipient_name']} · {value}" if saved_by_id[value]["recipient_name"] else value
+        ),
+        key="saved_recipient_choice",
+    )
+    selected_recipient = saved_by_id.get(recipient_choice)
+    selected_id = selected_recipient["recipient"] if selected_recipient else None
+    previous_id = st.session_state.get("previous_saved_recipient")
+    if selected_recipient:
+        st.session_state.transfer_recipient = selected_recipient["recipient"]
+        st.session_state.transfer_recipient_name = selected_recipient["recipient_name"]
+    elif previous_id:
+        st.session_state.transfer_recipient = ""
+        st.session_state.transfer_recipient_name = ""
+    st.session_state.previous_saved_recipient = selected_id
     if not st.session_state.get("camera_enabled", False):
         st.caption("Camera access is off. Choose the button below to open the scanner; your browser may ask for permission.")
         if st.button("Open camera to scan QR", icon=":material/qr_code_scanner:"):
@@ -630,6 +737,12 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 st.warning("Install the requirements to decode QR images, or enter the recipient ID manually.")
     with st.container(border=True):
         with st.form("transfer_form"):
+            recipient_name = st.text_input(
+                "Recipient name",
+                placeholder="Optional name to save this recipient",
+                key="transfer_recipient_name",
+                disabled=selected_recipient is not None,
+            )
             recipient = st.text_input(
                 "Phone number, UPI ID, or VirtualPay ID",
                 placeholder="For example, 9876543210 or VP-ABC123",
@@ -666,15 +779,16 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     db.execute("UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ?", (amount, phone))
                     if account:
                         db.execute("UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ?", (amount, source_id, phone))
-                record_recipient(phone, recipient)
+                record_recipient(phone, recipient, recipient_name)
+                display_name = recipient_name.strip() or recipient
                 add_transaction(
                     phone,
-                    recipient,
-                    "VirtualPay transfer · " + (account["name"] if account else "Main account"),
+                    display_name,
+                    "Transfer to " + recipient + " · " + (account["name"] if account else "Main account"),
                     account["name"] if account else "Main account",
                     -int(amount),
                 )
-                st.success(f"Demo transfer of {Indian_money(amount)} recorded for {recipient}.")
+                set_flash(f"Transfer successful: {Indian_money(amount)} sent to {display_name}.")
                 st.rerun()
 
 
@@ -690,7 +804,7 @@ def show_transaction_table(phone: str, limit: int | None = None) -> None:
 
 
 def render_activity(phone: str, accounts: list[dict[str, Any]]) -> None:
-    st.title("Activity")
+    st.title("History")
     st.write("Every payment and allocation, all in one place.")
     frame = get_transactions(phone)
     if frame.empty:
@@ -722,7 +836,7 @@ else:
     st.markdown("### :material/account_balance_wallet: VirtualPay")
     page = st.segmented_control(
         "Main navigation",
-        ["Overview", "My accounts", "Transfer money", "Activity"],
+        ["Overview", "My accounts", "Transfer money", "History"],
         key="nav_page",
         label_visibility="collapsed",
         width="stretch",
@@ -736,5 +850,5 @@ else:
         render_accounts(user, accounts)
     elif page == "Transfer money":
         render_transfer(user, accounts)
-    elif page == "Activity":
+    elif page == "History":
         render_activity(user["phone"], accounts)

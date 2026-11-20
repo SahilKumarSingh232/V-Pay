@@ -30,6 +30,13 @@ New profiles start with one main account, no virtual accounts, and an empty acti
 
 QR codes and camera scanning are for VirtualPay demo IDs. The camera stays off until the user chooses **Open camera to scan QR**; the browser then requests camera permission. Transfers are simulated; the app does not connect to a bank, send UPI payments, or require a real PIN. Account and transaction data is stored locally in `virtualpay.db`.
 
+## App flow
+
+- Sign in with a phone number and demo OTP. New profiles get a main account only; the starting demo balance defaults to ₹0, and virtual-account history starts empty.
+- The home screen shows the profile, VirtualPay ID and QR, plus Account, Transfer money, History, and Scan QR actions.
+- Create virtual accounts yourself. Add money, withdraw it to the main account's available allocation, and move allocations between virtual accounts with the demo PIN.
+- Transfers support saved recipients, a recipient name and ID, a chosen source account, and demo PIN confirmation. The camera scanner opens only after an explicit scan action.
+
 ## Backend and user data
 
 The backend is implemented in Python in `app.py`, alongside the Streamlit interface. It handles demo sign-in, account allocation and rebalancing, simulated transfers, QR creation and scanning, and transaction history. SQLite queries and business logic are kept in the same file; this prototype does not use a separate API server.
