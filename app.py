@@ -482,6 +482,11 @@ def open_main_account() -> None:
     st.session_state.account_page_view = "main_pin"
 
 
+def open_virtual_accounts() -> None:
+    st.session_state.pop("selected_account_id", None)
+    st.session_state.account_page_view = "virtual_list"
+
+
 def show_main_account() -> None:
     st.session_state.pop("selected_account_id", None)
     st.session_state.account_page_view = "main"
@@ -492,9 +497,9 @@ def show_account_create_form() -> None:
     st.session_state.account_page_view = "create_form"
 
 
-def back_to_main_account() -> None:
+def back_to_virtual_accounts() -> None:
     st.session_state.pop("selected_account_id", None)
-    st.session_state.account_page_view = "main"
+    st.session_state.account_page_view = "virtual_list"
 
 
 def back_to_account_menu() -> None:
@@ -513,7 +518,7 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
 
     if view == "menu":
         st.caption("Choose an account option")
-        options = st.columns(2, gap="large")
+        options = st.columns(3, gap="large")
         options[0].button(
             "Main account",
             icon=":material/account_balance:",
@@ -521,6 +526,12 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             on_click=open_main_account,
         )
         options[1].button(
+            "Virtual accounts",
+            icon=":material/account_balance_wallet:",
+            width="stretch",
+            on_click=open_virtual_accounts,
+        )
+        options[2].button(
             "Create virtual account",
             icon=":material/add:",
             width="stretch",
@@ -584,35 +595,36 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                 except sqlite3.Error:
                     st.toast("Virtual account creation failed. No account was created.", icon="⚠️")
                 else:
-                    st.session_state.selected_account_id = account_id
-                    st.session_state.account_page_view = "virtual"
+                    st.session_state.pop("selected_account_id", None)
+                    st.session_state.account_page_view = "virtual_list"
                     st.session_state.account_action = "overview"
                     set_flash(f"{name.strip()} virtual account created successfully.")
                     st.rerun()
         return
 
-    if view not in {"main", "virtual"}:
+    if view not in {"main", "virtual_list", "virtual"}:
         st.session_state.account_page_view = "menu"
         st.rerun()
 
     if view == "main":
         st.button("Back to account options", icon=":material/arrow_back:", on_click=back_to_account_menu)
-    else:
-        st.button("Back to main account", icon=":material/arrow_back:", on_click=back_to_main_account)
-
-    free = available_to_allocate(phone)
-    st.caption("Main account and virtual accounts")
-
-    account_list_col, account_detail_col = st.columns([1, 1.2], gap="large")
-    with account_list_col:
         with st.container(border=True):
             st.caption("MAIN ACCOUNT")
             st.markdown(f"**{user['bank']} ···· {user['last4']}**")
             st.metric("Money available for allocation", available_label(phone))
             total_balance = "Unlimited" if is_admin(phone) else Indian_money(user["bank_balance"])
             st.caption(f"Total bank balance: {total_balance}")
+        return
 
-        st.subheader("Virtual accounts")
+    if view == "virtual_list":
+        st.button("Back to account options", icon=":material/arrow_back:", on_click=back_to_account_menu)
+    else:
+        st.button("Back to virtual accounts", icon=":material/arrow_back:", on_click=back_to_virtual_accounts)
+
+    st.subheader("Virtual accounts")
+
+    account_list_col, account_detail_col = st.columns([1, 1.2], gap="large")
+    with account_list_col:
         if accounts:
             for item in accounts:
                 with st.container(border=True):
@@ -627,12 +639,13 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     )
         else:
             st.info("No virtual accounts yet. Create one to start setting money aside.")
+            st.button("Create virtual account", on_click=open_new_account)
     selected_id = st.session_state.get("selected_account_id")
     account = get_account(phone, selected_id) if selected_id else None
     with account_detail_col, st.container(border=True):
         if account is None:
-            st.subheader("Main account")
-            st.caption("Choose a virtual account from the list to manage it.")
+            st.subheader("Select a virtual account")
+            st.caption("Choose one from the list to view and manage its allocation.")
         else:
             st.subheader(f"{account['emoji']} {account['name']}")
             st.metric("Available balance", Indian_money(account["balance"]))
