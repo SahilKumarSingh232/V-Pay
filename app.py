@@ -6,7 +6,7 @@ import hashlib
 import io
 import secrets
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,12 +20,6 @@ APP_DIR = Path(__file__).resolve().parent
 DB_PATH = APP_DIR / "virtualpay.db"
 OTP_DEMO = "123456"
 BANKS = ["State Bank of India", "HDFC Bank", "ICICI Bank", "Axis Bank", "Other bank"]
-SEED_ACCOUNTS = [
-    ("shopping", "Shopping", "🛍️", "Little things, big joy", 8200, 12000),
-    ("business", "Business", "💼", "For work and what’s next", 14800, 20000),
-    ("emergency", "Emergency", "🌱", "A little peace of mind", 5000, 10000),
-    ("travel", "Travel", "✈️", "Your next great escape", 7000, 10000),
-]
 
 
 def connect() -> sqlite3.Connection:
@@ -43,7 +37,7 @@ def initialize_database() -> None:
                 name TEXT NOT NULL,
                 bank TEXT NOT NULL,
                 last4 TEXT NOT NULL,
-                bank_balance INTEGER NOT NULL DEFAULT 50000,
+                bank_balance INTEGER NOT NULL DEFAULT 0,
                 virtual_id TEXT NOT NULL UNIQUE,
                 pin_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
@@ -139,38 +133,15 @@ def add_transaction(
         )
 
 
-def create_user(phone: str, name: str, bank: str, last4: str, pin: str) -> None:
+def create_user(phone: str, name: str, bank: str, last4: str, pin: str, bank_balance: int) -> None:
     virtual_id = "VP-" + secrets.token_hex(3).upper()
     now = datetime.now().isoformat(timespec="seconds")
     with connect() as db:
         db.execute(
-            """INSERT INTO users(phone, name, bank, last4, virtual_id, pin_hash, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (phone, name.strip(), bank, last4, virtual_id, pin_digest(pin), now),
+            """INSERT INTO users(phone, name, bank, last4, bank_balance, virtual_id, pin_hash, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (phone, name.strip(), bank, last4, bank_balance, virtual_id, pin_digest(pin), now),
         )
-        for _, account_name, emoji, description, balance, budget in SEED_ACCOUNTS:
-            account_id = secrets.token_hex(8)
-            db.execute(
-                """INSERT INTO accounts(account_id, phone, name, emoji, description,
-                   balance, budget, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (account_id, phone, account_name, emoji, description, balance, budget, now),
-            )
-        seed_transactions = [
-            ("Myntra", "UPI · myntra@paytm", "Shopping", -2499, 0),
-            ("Monthly allocation", "Budget top-up", "Emergency", 1200, 0),
-            ("Notion Plus", "UPI · notion@okaxis", "Business", -800, 1),
-            ("Swiggy", "UPI · swiggy@ibl", "Shopping", -680, 1),
-            ("Flight booking", "UPI · ixigo@axis", "Travel", -6499, 3),
-            ("Monthly allocation", "Budget top-up", "Business", 3000, 5),
-            ("Uber", "UPI · uber@axis", "Shopping", -321, 6),
-        ]
-        for name_, detail, account, amount, days_ago in seed_transactions:
-            created = (datetime.now() - timedelta(days=days_ago)).isoformat(timespec="seconds")
-            db.execute(
-                """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (phone, name_, detail, account, amount, created),
-            )
 
 
 def record_recipient(phone: str, recipient: str) -> None:
@@ -202,14 +173,13 @@ def get_transactions(phone: str) -> pd.DataFrame:
         frame["created_at"] = pd.to_datetime(frame["created_at"])
         frame["Date"] = frame["created_at"].dt.strftime("%d %b %Y, %I:%M %p")
         frame["Amount"] = frame["amount"].map(Indian_money)
-        frame.rename(
+        frame = frame.rename(
             columns={
                 "name": "Transaction",
                 "detail": "Details",
                 "account_name": "Virtual account",
                 "status": "Status",
             },
-            inplace=True,
         )
     return frame
 
@@ -230,13 +200,27 @@ def set_accounts_section(section: str) -> None:
     st.session_state.account_section = section
 
 
+def set_flash(message: str, kind: str = "success") -> None:
+    st.session_state.flash_message = {"message": message, "kind": kind}
+
+
+def render_flash() -> None:
+    flash = st.session_state.pop("flash_message", None)
+    if not flash:
+        return
+    if flash["kind"] == "error":
+        st.error(flash["message"], icon=":material/error:")
+    else:
+        st.success(flash["message"], icon=":material/check_circle:")
+
+
 def authenticate(phone: str) -> None:
     st.session_state.user_phone = phone
     st.session_state.auth_stage = "signed_in"
     st.session_state.nav_page = "Overview"
 
 
-st.set_page_config(page_title="VirtualPay", page_icon=":material/account_balance_wallet:", layout="wide")
+st.set_page_config(page_title="VirtualPay", page_icon=":material/account_balance_wallet:", layout="centered")
 initialize_database()
 
 if "auth_stage" not in st.session_state:
@@ -299,6 +283,10 @@ def render_login() -> None:
                 name = st.text_input("Full name", placeholder="Your name")
                 bank = st.selectbox("Bank", BANKS)
                 last4 = st.text_input("Last 4 digits of account", max_chars=4, placeholder="2841")
+                bank_balance = st.number_input(
+                    "Main account balance (demo)", min_value=0, step=1000, value=0,
+                    help="Starts at ₹0. Enter a sample balance if you want to try allocating money.",
+                )
                 pin = st.text_input("Create demo payment PIN", type="password", max_chars=6)
                 st.caption("Use a made-up PIN. Never enter your real bank or UPI PIN.")
                 submitted = st.form_submit_button("Create my account", type="primary", width="stretch")
@@ -310,7 +298,7 @@ def render_login() -> None:
                 elif not pin.isdigit() or len(pin) not in (4, 5, 6):
                     st.error("Use a 4–6 digit demo PIN.")
                 else:
-                    create_user(st.session_state.pending_phone, name, bank, last4, pin)
+                    create_user(st.session_state.pending_phone, name, bank, last4, pin, int(bank_balance))
                     authenticate(st.session_state.pending_phone)
                     st.rerun()
 
@@ -330,26 +318,21 @@ def render_login() -> None:
     st.caption("VirtualPay is a local concept prototype. It does not connect to banks or send payments.")
 
 
-def render_sidebar(user: dict[str, Any]) -> str:
+def render_sidebar(user: dict[str, Any]) -> None:
     with st.sidebar:
         st.markdown("### :material/account_balance_wallet: VirtualPay")
         st.caption(f"{user['name']} · +91 {user['phone']}")
-        page = st.radio(
-            "Navigation",
-            ["Overview", "My accounts", "Transfer money", "Activity"],
-            key="nav_page",
-            label_visibility="collapsed",
-        )
         st.divider()
         st.caption("LINKED BANK")
         st.write(f"**{user['bank']}**")
         st.caption(f"Primary · account ending {user['last4']}")
+        st.metric("Main account", Indian_money(user["bank_balance"]))
         st.success("Bank connection is active", icon=":material/verified_user:")
         if st.button("Sign out", icon=":material/logout:", width="stretch"):
             st.session_state.auth_stage = "phone"
             st.session_state.pop("user_phone", None)
+            st.session_state.camera_enabled = False
             st.rerun()
-        return page
 
 
 def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> None:
@@ -364,11 +347,19 @@ def render_overview(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         st.button("My receiving QR", icon=":material/qr_code:", on_click=set_accounts_section, args=("Receive money",))
         st.button("View activity", icon=":material/history:", on_click=set_page, args=("Activity",))
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total bank balance", Indian_money(user["bank_balance"]), border=True)
-    m2.metric("Allocated to budgets", Indian_money(allocated), border=True)
-    m3.metric("Available to allocate", Indian_money(free), border=True)
-    m4.metric("Virtual accounts", str(len(accounts)), border=True)
+    with st.container(border=True):
+        bank_col, balance_col = st.columns([1.3, 1], vertical_alignment="center")
+        with bank_col:
+            st.caption("MAIN ACCOUNT")
+            st.markdown(f"**{user['bank']} ···· {user['last4']}**")
+            st.caption("Your linked bank account")
+        with balance_col:
+            st.metric("Bank balance", Indian_money(user["bank_balance"]))
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Allocated to budgets", Indian_money(allocated), border=True)
+    m2.metric("Available to allocate", Indian_money(free), border=True)
+    m3.metric("Virtual accounts", str(len(accounts)), border=True)
 
     st.subheader("Your virtual accounts")
     if not accounts:
@@ -429,12 +420,18 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     phone = user["phone"]
     st.title("Virtual accounts")
     st.write("Create budgets for the things that matter. Every rupee stays in your bank.")
+    st.metric("Main account balance", Indian_money(user["bank_balance"]))
 
-    default_section = "Manage accounts" if st.session_state.get("selected_account_id") else "Create account"
+    if not accounts and st.session_state.get("account_section") == "Manage accounts":
+        st.session_state.account_section = "Create account"
+        st.session_state.pop("selected_account_id", None)
+    if "account_section" not in st.session_state:
+        st.session_state.account_section = (
+            "Manage accounts" if st.session_state.get("selected_account_id") else "Create account"
+        )
     section = st.segmented_control(
         "Account tools",
         ["Create account", "Manage accounts", "Receive money"],
-        default=default_section,
         key="account_section",
     )
     if section == "Create account":
@@ -533,11 +530,27 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                                 st.error("That is more than this account's current allocation.")
                             else:
                                 target = get_account(phone, target_id)
-                                with connect() as db:
-                                    db.execute("UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ?", (amount, selected_id, phone))
-                                    db.execute("UPDATE accounts SET balance = balance + ?, budget = MAX(budget, balance + ?) WHERE account_id = ? AND phone = ?", (amount, amount, target_id, phone))
-                                add_transaction(phone, "Allocation moved", f"Moved from {account['name']}", target["name"], int(amount))
-                                st.success(f"{Indian_money(amount)} moved to {target['name']}.")
+                                try:
+                                    with connect() as db:
+                                        source_result = db.execute(
+                                            "UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ? AND balance >= ?",
+                                            (amount, selected_id, phone, amount),
+                                        )
+                                        target_result = db.execute(
+                                            "UPDATE accounts SET balance = balance + ?, budget = MAX(budget, balance + ?) WHERE account_id = ? AND phone = ?",
+                                            (amount, amount, target_id, phone),
+                                        )
+                                        if source_result.rowcount != 1 or target_result.rowcount != 1:
+                                            raise sqlite3.IntegrityError("Account changed before the move completed")
+                                        db.execute(
+                                            """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                                               VALUES (?, ?, ?, ?, ?, ?)""",
+                                            (phone, "Allocation moved", f"Moved from {account['name']}", target["name"], int(amount), datetime.now().isoformat(timespec="seconds")),
+                                        )
+                                except sqlite3.Error:
+                                    set_flash("Move failed. No allocation was changed. Please try again.", "error")
+                                else:
+                                    set_flash(f"Move successful: {Indian_money(amount)} moved from {account['name']} to {target['name']}.")
                                 st.rerun()
 
                 with edit_tab:
@@ -564,9 +577,15 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                             st.rerun()
                     confirm = st.checkbox("I understand that deleting this account returns its allocation to the main account.", key=f"confirm_delete_{selected_id}")
                     if st.button("Delete virtual account", type="secondary", disabled=not confirm, key=f"delete_{selected_id}"):
-                        with connect() as db:
-                            db.execute("DELETE FROM accounts WHERE account_id = ? AND phone = ?", (selected_id, phone))
-                        st.success("Account deleted. Its allocation is available again.")
+                        try:
+                            with connect() as db:
+                                result = db.execute("DELETE FROM accounts WHERE account_id = ? AND phone = ?", (selected_id, phone))
+                                if result.rowcount != 1:
+                                    raise sqlite3.IntegrityError("Account was not found")
+                        except sqlite3.Error:
+                            set_flash("Delete failed. The account is still available.", "error")
+                        else:
+                            set_flash(f"Deleted {account['name']}. Its allocation is available in the main account.")
                         st.rerun()
 
     elif section == "Receive money":
@@ -584,22 +603,31 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
     saved = list_recipients(phone)
     if saved:
         st.caption("Recently used recipients: " + " · ".join(saved))
-    photo = st.camera_input("Scan a recipient QR code", key="transfer_qr")
-    if photo is not None:
-        try:
-            import zxingcpp
+    if not st.session_state.get("camera_enabled", False):
+        st.caption("Camera access is off. Choose the button below to open the scanner; your browser may ask for permission.")
+        if st.button("Open camera to scan QR", icon=":material/qr_code_scanner:"):
+            st.session_state.camera_enabled = True
+            st.rerun()
+    else:
+        if st.button("Close camera", icon=":material/videocam_off:"):
+            st.session_state.camera_enabled = False
+            st.rerun()
+        photo = st.camera_input("Scan a recipient QR code", key="transfer_qr")
+        if photo is not None:
+            try:
+                import zxingcpp
 
-            from PIL import Image
+                from PIL import Image
 
-            decoded = zxingcpp.read_barcodes(np.asarray(Image.open(photo).convert("RGB")))
-            if decoded:
-                value = decoded[0].text.removeprefix("virtualpay://receive/")
-                st.session_state.transfer_recipient = value
-                st.success(f"QR code read: {value}")
-            else:
-                st.warning("No QR code was found in that image. You can enter the recipient ID manually.")
-        except ImportError:
-            st.warning("Install the requirements to decode QR images, or enter the recipient ID manually.")
+                decoded = zxingcpp.read_barcodes(np.asarray(Image.open(photo).convert("RGB")))
+                if decoded:
+                    value = decoded[0].text.removeprefix("virtualpay://receive/")
+                    st.session_state.transfer_recipient = value
+                    st.success(f"QR code read: {value}")
+                else:
+                    st.warning("No QR code was found in that image. You can enter the recipient ID manually.")
+            except ImportError:
+                st.warning("Install the requirements to decode QR images, or enter the recipient ID manually.")
     with st.container(border=True):
         with st.form("transfer_form"):
             recipient = st.text_input(
@@ -690,7 +718,18 @@ else:
         st.session_state.auth_stage = "phone"
         st.rerun()
     accounts = list_accounts(user["phone"])
-    page = render_sidebar(user)
+    render_sidebar(user)
+    st.markdown("### :material/account_balance_wallet: VirtualPay")
+    page = st.segmented_control(
+        "Main navigation",
+        ["Overview", "My accounts", "Transfer money", "Activity"],
+        key="nav_page",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    if page != "Transfer money":
+        st.session_state.camera_enabled = False
+    render_flash()
     if page == "Overview":
         render_overview(user, accounts)
     elif page == "My accounts":
