@@ -253,9 +253,8 @@ def render_login() -> None:
         if stage == "phone":
             st.subheader("Welcome to VirtualPay")
             st.caption("Enter your phone number to get started.")
-            with st.form("phone_form"):
-                phone = st.text_input("Mobile number", max_chars=10, placeholder="10-digit phone number")
-                submitted = st.form_submit_button("Continue", type="primary", width="stretch")
+            phone = st.text_input("Mobile number", placeholder="10-digit phone number")
+            submitted = st.button("Continue", type="primary", width="stretch")
             if submitted:
                 cleaned = phone.strip()
                 if not cleaned.isdigit() or len(cleaned) != 10:
