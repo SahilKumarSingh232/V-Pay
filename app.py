@@ -611,9 +611,13 @@ def render_accounts(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
         with st.container(border=True):
             st.caption("MAIN ACCOUNT")
             st.markdown(f"**{user['bank']} ···· {user['last4']}**")
-            st.metric("Money available for allocation", available_label(phone))
-            total_balance = "Unlimited" if is_admin(phone) else Indian_money(user["bank_balance"])
-            st.caption(f"Total bank balance: {total_balance}")
+            allocated = sum(item["balance"] for item in accounts)
+            main_balance = "Unlimited" if is_admin(phone) else Indian_money(user["bank_balance"])
+            metrics = st.columns(3)
+            metrics[0].metric("Main account balance", main_balance)
+            metrics[1].metric("Allocated to virtual accounts", Indian_money(allocated))
+            metrics[2].metric("Available to allocate", available_label(phone))
+            st.caption("Allocating money only reserves it for a purpose. The main balance changes when you make a payment.")
         return
 
     if view == "virtual_list":
