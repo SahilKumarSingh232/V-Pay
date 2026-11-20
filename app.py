@@ -929,20 +929,64 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
             st.toast("Choose another person's account. No money was sent.", icon="⚠️")
         else:
             account = get_account(phone, source_id) if source_id != "main" else None
-            if source_id == "main" and amount > available_to_allocate(phone):
-                st.toast("There is not enough money available in the main account.", icon="⚠️")
+            if source_id == "main" and not is_admin(phone) and amount > user["bank_balance"]:
+                st.toast("There is not enough money in the main account and its virtual allocations.", icon="⚠️")
             elif account is not None and amount > account["balance"]:
                 st.toast(f"There is not enough money in {account['name']}.", icon="⚠️")
             else:
+                allocation_deductions: list[tuple[str, int]] = []
                 try:
                     with connect() as db:
                         result = None
                         if source_id == "main":
                             if not is_admin(phone):
+                                current_balance = db.execute(
+                                    "SELECT bank_balance FROM users WHERE phone = ?", (phone,)
+                                ).fetchone()
+                                if current_balance is None or amount > current_balance["bank_balance"]:
+                                    raise sqlite3.IntegrityError("Main account balance changed")
+                                virtual_accounts = db.execute(
+                                    """SELECT account_id, name, balance FROM accounts WHERE phone = ?
+                                       ORDER BY created_at DESC, rowid DESC""",
+                                    (phone,),
+                                ).fetchall()
+                                current_allocated = sum(item["balance"] for item in virtual_accounts)
+                                available_before = int(current_balance["bank_balance"]) - current_allocated
+                                remaining_to_cover = max(0, int(amount) - available_before)
                                 result = db.execute(
-                                    "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ? AND bank_balance - ? >= (SELECT COALESCE(SUM(balance), 0) FROM accounts WHERE phone = ?)",
-                                    (amount, phone, amount, phone),
+                                    "UPDATE users SET bank_balance = bank_balance - ? WHERE phone = ? AND bank_balance >= ?",
+                                    (amount, phone, amount),
                                 )
+                                if result.rowcount != 1:
+                                    raise sqlite3.IntegrityError("Main account balance changed")
+                                for virtual_account in virtual_accounts:
+                                    if remaining_to_cover <= 0:
+                                        break
+                                    deduction = min(int(virtual_account["balance"]), remaining_to_cover)
+                                    if deduction <= 0:
+                                        continue
+                                    account_result = db.execute(
+                                        "UPDATE accounts SET balance = balance - ? WHERE account_id = ? AND phone = ? AND balance >= ?",
+                                        (deduction, virtual_account["account_id"], phone, deduction),
+                                    )
+                                    if account_result.rowcount != 1:
+                                        raise sqlite3.IntegrityError("Virtual account balance changed")
+                                    allocation_deductions.append((virtual_account["name"], deduction))
+                                    db.execute(
+                                        """INSERT INTO transactions(phone, name, detail, account_name, amount, created_at)
+                                           VALUES (?, ?, ?, ?, ?, ?)""",
+                                        (
+                                            phone,
+                                            "Allocation used for payment",
+                                            f"Main account payment to {recipient_user['name']}",
+                                            virtual_account["name"],
+                                            -deduction,
+                                            datetime.now().isoformat(timespec="seconds"),
+                                        ),
+                                    )
+                                    remaining_to_cover -= deduction
+                                if remaining_to_cover > 0:
+                                    raise sqlite3.IntegrityError("Virtual allocations could not cover the payment")
                         else:
                             if not is_admin(phone):
                                 result = db.execute(
@@ -990,7 +1034,13 @@ def render_transfer(user: dict[str, Any], accounts: list[dict[str, Any]]) -> Non
                     set_flash("Transfer failed. No account balance was changed.", "error")
                 else:
                     st.session_state.transfer_scan_recipient = ""
-                    set_flash(f"Transfer successful: {Indian_money(amount)} sent to {display_name} and credited to their main account.")
+                    message = f"Transfer successful: {Indian_money(amount)} sent to {display_name} and credited to their main account."
+                    if allocation_deductions:
+                        deductions = " → ".join(
+                            f"{name} {Indian_money(value)}" for name, value in allocation_deductions
+                        )
+                        message += f" Virtual account amounts used (newest first): {deductions}."
+                    set_flash(message)
                 st.rerun()
 
 def show_transaction_table(phone: str, limit: int | None = None) -> None:

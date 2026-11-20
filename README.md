@@ -37,6 +37,7 @@ QR codes and camera scanning are for VirtualPay demo IDs. The camera stays off u
 - The home screen shows the profile, VirtualPay ID and QR, plus Account, Transfer money, History, and Scan QR actions.
 - The Account page offers Main account, Virtual accounts, and Create virtual account. Main account and account creation require the demo PIN; Virtual accounts lists existing budgets separately, where each can be opened to manage it.
 - Allocating money only earmarks it for a virtual account; it does not reduce the main account balance. A payment from a virtual account reduces both that allocation and the main balance.
+- A payment chosen from the main account uses unallocated money first. If that is short, it reduces the newest virtual-account allocations first, then earlier ones, and reports the accounts used.
 - Transfers between VirtualPay demo users accept a phone number or VirtualPay ID, credit the recipient's main account, and add an incoming history entry. The sender confirms with the demo PIN; external bank and UPI transfers are not sent. The camera scanner opens only after an explicit scan action.
 
 ## Backend and user data
