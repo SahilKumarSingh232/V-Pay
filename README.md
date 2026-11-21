@@ -42,7 +42,7 @@ QR codes and camera scanning are for VirtualPay demo IDs. The camera stays off u
 
 ## Backend and user data
 
-The backend is implemented in Python in `app.py`, alongside the Streamlit interface. It handles demo sign-in, account allocation and rebalancing, simulated transfers, QR creation and scanning, and transaction history. SQLite queries and business logic are kept in the same file; this prototype does not use a separate API server.
+The backend is implemented in Python across `app.py` and the `virtualpay/` package. The entry point handles Streamlit page routing; database operations, shared state, formatting, and page interfaces are separated into focused modules. This prototype does not use a separate API server.
 
 The database is created automatically at `virtualpay.db` in the project folder when the app starts. A newly registered profile starts with no virtual accounts, transactions, or saved recipients. The main-account demo balance defaults to zero. The database stores:
 
@@ -55,6 +55,15 @@ The database is listed in `.gitignore`, so it is not committed to or uploaded to
 
 ## Project files
 
-- `app.py` — Streamlit UI and local SQLite demo logic
+- `app.py` — Streamlit entry point and page routing
+- `virtualpay/config.py` — application settings and demo credentials
+- `virtualpay/database.py` — SQLite schema, queries, and account data operations
+- `virtualpay/formatting.py` — rupee formatting, PIN hashing, and QR generation
+- `virtualpay/state.py` — shared navigation, authentication, and notifications
+- `virtualpay/ui/auth.py` — sign-in and registration screens
+- `virtualpay/ui/home.py` — sidebar and home screen
+- `virtualpay/ui/accounts.py` — main and virtual account screens
+- `virtualpay/ui/transfer.py` — recipient selection, QR scanning, and transfers
+- `virtualpay/ui/history.py` — transaction history and filtering
 - `requirements.txt` — Python dependencies
 - `.streamlit/config.toml` — Streamlit's native theme settings
