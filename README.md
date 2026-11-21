@@ -24,7 +24,7 @@ The app opens in your browser, usually at `http://localhost:8501`.
 - Enter any 10-digit phone number.
 - Use OTP `123456`.
 - Demo Admin profile: phone `1223334444`, PIN `282005`; its main account has unlimited simulated funds.
-- New users can create a demo profile, choose a sample bank, enter an optional starting demo balance (defaults to ₹0), and set a made-up payment PIN.
+- New users can create a demo profile, choose a sample bank, and set a made-up payment PIN. The main balance starts at ₹0.
 - Returning users enter the same phone number and their demo PIN.
 
 New profiles start with one main account, no virtual accounts, and an empty activity history. Users create and fund virtual accounts themselves.
@@ -33,7 +33,7 @@ QR codes and camera scanning are for VirtualPay demo IDs. The camera stays off u
 
 ## App flow
 
-- Sign in with a phone number and demo OTP. New profiles get a main account only; the starting demo balance defaults to ₹0, and virtual-account history starts empty.
+- Sign in with a phone number and demo OTP. New profiles get a main account with a ₹0 balance and empty virtual-account history.
 - The home screen shows the profile, VirtualPay ID and QR, plus Account, Transfer money, History, and Scan QR actions.
 - The Account page offers Main account, Virtual accounts, and Create virtual account. Main account and account creation require the demo PIN; Virtual accounts lists existing budgets separately, where each can be opened to manage it.
 - Allocating money only earmarks it for a virtual account; it does not reduce the main account balance. A payment from a virtual account reduces both that allocation and the main balance.

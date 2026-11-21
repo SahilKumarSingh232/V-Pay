@@ -387,10 +387,6 @@ def render_login() -> None:
             name = st.text_input("Full name", placeholder="Your name")
             bank = st.selectbox("Bank", BANKS)
             last4 = st.text_input("Last 4 digits of account", placeholder="2841")
-            bank_balance = st.number_input(
-                "Main account balance (demo)", min_value=0, step=1000, value=0,
-                help="Starts at ₹0. Enter a sample balance if you want to try allocating money.",
-            )
             pin = st.text_input("Create demo payment PIN", type="password")
             st.caption("Use a made-up PIN. Never enter your real bank or UPI PIN.")
             submitted = st.button("Create my account", type="primary", width="stretch")
@@ -402,7 +398,7 @@ def render_login() -> None:
                 elif not pin.isdigit() or len(pin) not in (4, 5, 6):
                     st.error("Use a 4–6 digit demo PIN.")
                 else:
-                    create_user(st.session_state.pending_phone, name, bank, last4, pin, int(bank_balance))
+                    create_user(st.session_state.pending_phone, name, bank, last4, pin, 0)
                     authenticate(st.session_state.pending_phone)
                     st.rerun()
 
