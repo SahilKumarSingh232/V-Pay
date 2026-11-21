@@ -5,8 +5,8 @@ from typing import Any
 
 import streamlit as st
 
-from ..database import available_label, available_to_allocate, get_account, is_admin, list_accounts
-from ..formatting import Indian_money, pin_digest
+from ..database import available_label, available_to_allocate, connect, get_account, is_admin, list_accounts
+from ..formatting import Indian_money, make_qr, pin_digest
 from ..state import set_flash
 
 def select_account(account_id: str) -> None:

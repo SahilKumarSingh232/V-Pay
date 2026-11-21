@@ -8,6 +8,7 @@ import streamlit as st
 from ..database import (
     available_label,
     available_to_allocate,
+    connect,
     find_virtualpay_recipient,
     get_account,
     is_admin,
